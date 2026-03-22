@@ -4,26 +4,49 @@ import os
 import schedule
 import time
 
-BOT_TOKEN = "8630469178:AAFRKkXcYzfXDl9ADiglScXrDTShsPcd6So"
-CHAT_ID   = "6391797266"
-CHAT_ID2  = "7543871208"
-JOBS_FILE = "seen_jobs2.json"
-CAREERS_URL = "https://careers.datadoghq.com/all-jobs/"
+BOT_TOKEN       = os.environ["TELEGRAM_BOT_TOKEN"]
+CHAT_ID         = os.environ["TELEGRAM_CHAT_ID"]
+CHAT_ID2        = os.environ["TELEGRAM_CHAT_ID2"]
+UPSTASH_URL     = os.environ["UPSTASH_REDIS_REST_URL"]
+UPSTASH_TOKEN   = os.environ["UPSTASH_REDIS_REST_TOKEN"]
+REDIS_KEY       = "datadog:seen_jobs"
+
 GREENHOUSE_API = "https://boards-api.greenhouse.io/v1/boards/datadog/jobs"
 
+
 def load_seen_jobs():
-    if os.path.exists(JOBS_FILE):
-        try:
-            with open(JOBS_FILE) as f:
-                data = json.load(f)
-                return data
-        except (json.JSONDecodeError, TypeError):
-            return {}
-    return {}
+    """Load seen jobs list from Upstash Redis (replaces reading seen_jobs2.json)."""
+    try:
+        resp = requests.get(
+            f"{UPSTASH_URL}/GET/{REDIS_KEY}",
+            headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        result = resp.json().get("result")
+        if result:
+            return json.loads(result)
+    except Exception as e:
+        print(f"Error loading seen jobs from Redis: {e}")
+    return []
+
 
 def save_seen_jobs(jobs):
-    with open(JOBS_FILE, "w") as f:
-        json.dump(jobs, f)
+    """Save seen jobs list to Upstash Redis. Uses POST with body to avoid URL length limits."""
+    try:
+        # Convert tuples to lists for JSON, ensure all items are serializable
+        serializable = [list(j) for j in jobs]
+        payload = json.dumps(serializable)
+        resp = requests.post(
+            f"{UPSTASH_URL}/SET/{REDIS_KEY}",
+            headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
+            data=payload,
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"Error saving seen jobs to Redis: {e}")
+
 
 def fetch_jobs():
     resp = requests.get(GREENHOUSE_API, timeout=15)
@@ -36,6 +59,7 @@ def fetch_jobs():
             "url": job["absolute_url"]
         }
     return jobs
+
 
 def send_telegram(text, max_retries=3):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -54,8 +78,8 @@ def send_telegram(text, max_retries=3):
     for attempt in range(max_retries):
         try:
             resp = requests.post(url, json=payload, timeout=30)
-            resp2 = requests.post(url, json=payload2, timeout=30)
             resp.raise_for_status()
+            resp2 = requests.post(url, json=payload2, timeout=30)
             resp2.raise_for_status()
             return True
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
@@ -64,6 +88,7 @@ def send_telegram(text, max_retries=3):
             else:
                 print(f"  Failed to send Telegram after {max_retries} attempts: {e}")
                 return False
+
 
 def check_jobs():
     print("Checking Datadog jobs...")
@@ -78,7 +103,7 @@ def check_jobs():
 
     for title, location in new_jobs:
         url = current_jobs[(title, location)]["url"]
-        message = f"{title}\n\n{location}\n\n<a href='{url}'>View listing</a>"
+        message = f"<b>{title}</b>\n\n{location}\n\n<a href='{url}'>View listing</a>"
         if send_telegram(message):
             print(f"Notified: {title} {location}")
         time.sleep(1)  # Avoid Telegram rate limiting
@@ -87,6 +112,7 @@ def check_jobs():
         save_seen_jobs(seen + new_jobs)
     else:
         print("No new jobs found.")
+
 
 # Run immediately, then every 30 minutes
 check_jobs()
