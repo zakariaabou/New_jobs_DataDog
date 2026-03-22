@@ -6,6 +6,7 @@ import time
 
 BOT_TOKEN = "8630469178:AAFRKkXcYzfXDl9ADiglScXrDTShsPcd6So"
 CHAT_ID   = "6391797266"
+CHAT_ID2  = "7543871208"
 JOBS_FILE = "seen_jobs2.json"
 CAREERS_URL = "https://careers.datadoghq.com/all-jobs/"
 GREENHOUSE_API = "https://boards-api.greenhouse.io/v1/boards/datadog/jobs"
@@ -44,10 +45,18 @@ def send_telegram(text, max_retries=3):
         "parse_mode": "HTML",
         "disable_web_page_preview": False,
     }
+    payload2 = {
+        "chat_id": CHAT_ID2,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False,
+    }
     for attempt in range(max_retries):
         try:
             resp = requests.post(url, json=payload, timeout=30)
+            resp2 = requests.post(url, json=payload2, timeout=30)
             resp.raise_for_status()
+            resp2.raise_for_status()
             return True
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             if attempt < max_retries - 1:
