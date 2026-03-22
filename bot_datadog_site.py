@@ -135,6 +135,7 @@ def check_jobs():
     else:
         print("No new jobs found.")
 
+start_health_server()
 
 # Run immediately, then every 30 minutes
 check_jobs()
