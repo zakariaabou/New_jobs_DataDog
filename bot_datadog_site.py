@@ -3,6 +3,8 @@ import json
 import os
 import schedule
 import time
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 BOT_TOKEN       = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID         = os.environ["TELEGRAM_CHAT_ID"]
@@ -13,6 +15,26 @@ REDIS_KEY       = "datadog:seen_jobs"
 
 GREENHOUSE_API = "https://boards-api.greenhouse.io/v1/boards/datadog/jobs"
 
+# ── Minimal health check server (keeps Koyeb happy) ──────────────────────────
+ 
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+ 
+    def log_message(self, format, *args):
+        pass  # silence request logs
+ 
+def start_health_server():
+    port = int(os.environ.get("PORT", 8000))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    print(f"Health check server running on port {port}")
+ 
+ 
+# ── Upstash Redis ─────────────────────────────────────────────────────────────
 
 def load_seen_jobs():
     """Load seen jobs list from Upstash Redis (replaces reading seen_jobs2.json)."""
