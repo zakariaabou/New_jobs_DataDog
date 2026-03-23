@@ -7,10 +7,10 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 BOT_TOKEN       = os.environ["TELEGRAM_BOT_TOKEN"]
-CHAT_ID         = os.environ["TELEGRAM_CHAT_ID"]
-CHAT_ID2        = os.environ["TELEGRAM_CHAT_ID2"]
+CHAT_IDS        = os.environ["TELEGRAM_CHAT_IDS"]
 UPSTASH_URL     = os.environ["UPSTASH_REDIS_REST_URL"]
 UPSTASH_TOKEN   = os.environ["UPSTASH_REDIS_REST_TOKEN"]
+KOYEB_URL       = os.environ["KOYEB_URL"]
 REDIS_KEY       = "datadog:seen_jobs"
 
 GREENHOUSE_API = "https://boards-api.greenhouse.io/v1/boards/datadog/jobs"
@@ -32,6 +32,15 @@ def start_health_server():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     print(f"Health check server running on port {port}")
+
+# ── Self-ping to prevent Koyeb free tier sleep ────────────────────────────────
+ 
+def ping_self():
+    try:
+        requests.get(KOYEB_URL, timeout=10)
+        print("Self-ping OK")
+    except Exception as e:
+        print(f"Self-ping failed: {e}")
  
  
 # ── Upstash Redis ─────────────────────────────────────────────────────────────
@@ -83,16 +92,10 @@ def fetch_jobs():
     return jobs
 
 
-def send_telegram(text, max_retries=3):
+def send_telegram(text, CHAT_ID, max_retries=3):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False,
-    }
-    payload2 = {
-        "chat_id": CHAT_ID2,
         "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": False,
@@ -101,8 +104,6 @@ def send_telegram(text, max_retries=3):
         try:
             resp = requests.post(url, json=payload, timeout=30)
             resp.raise_for_status()
-            resp2 = requests.post(url, json=payload2, timeout=30)
-            resp2.raise_for_status()
             return True
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             if attempt < max_retries - 1:
@@ -126,8 +127,9 @@ def check_jobs():
     for title, location in new_jobs:
         url = current_jobs[(title, location)]["url"]
         message = f"<b>{title}</b>\n\n{location}\n\n<a href='{url}'>View listing</a>"
-        if send_telegram(message):
-            print(f"Notified: {title} {location}")
+        for CHAT_ID in CHAT_IDS.split(","):
+            if send_telegram(message, CHAT_ID):
+                print(f"Notified: {title} {location} to {CHAT_ID}")
         time.sleep(1)  # Avoid Telegram rate limiting
 
     if new_jobs:
@@ -139,6 +141,7 @@ start_health_server()
 
 # Run immediately, then every 30 minutes
 check_jobs()
+schedule.every(1).hours.do(ping_self)
 schedule.every(30).minutes.do(check_jobs)
 
 while True:
