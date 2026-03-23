@@ -4,6 +4,7 @@ import os
 import schedule
 import time
 import threading
+import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 BOT_TOKEN       = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -31,16 +32,16 @@ def start_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    print(f"Health check server running on port {port}")
+    logging.info(f"Health check server running on port {port}")
 
 # ── Self-ping to prevent Koyeb free tier sleep ────────────────────────────────
  
 def ping_self():
     try:
         requests.get(KOYEB_URL, timeout=10)
-        print("Self-ping OK")
+        logging.info("Self-ping OK")
     except Exception as e:
-        print(f"Self-ping failed: {e}")
+        logging.error(f"Self-ping failed: {e}")
  
  
 # ── Upstash Redis ─────────────────────────────────────────────────────────────
@@ -58,7 +59,7 @@ def load_seen_jobs():
         if result:
             return json.loads(result)
     except Exception as e:
-        print(f"Error loading seen jobs from Redis: {e}")
+        logging.error(f"Error loading seen jobs from Redis: {e}")
     return []
 
 
@@ -76,7 +77,7 @@ def save_seen_jobs(jobs):
         )
         resp.raise_for_status()
     except Exception as e:
-        print(f"Error saving seen jobs to Redis: {e}")
+        logging.error(f"Error saving seen jobs to Redis: {e}")
 
 
 def fetch_jobs():
@@ -109,16 +110,16 @@ def send_telegram(text, CHAT_ID, max_retries=3):
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)  # 1s, 2s, 4s backoff
             else:
-                print(f"  Failed to send Telegram after {max_retries} attempts: {e}")
+                logging.error(f"  Failed to send Telegram after {max_retries} attempts: {e}")
                 return False
 
 
 def check_jobs():
-    print("Checking Datadog jobs...")
+    logging.info("Checking Datadog jobs...")
     try:
         current_jobs = fetch_jobs()
     except Exception as e:
-        print(f"Error fetching jobs: {e}")
+        logging.error(f"Error fetching jobs: {e}")
         return
 
     seen = load_seen_jobs()
@@ -129,19 +130,19 @@ def check_jobs():
         message = f"<b>{title}</b>\n\n{location}\n\n<a href='{url}'>View listing</a>"
         for CHAT_ID in CHAT_IDS.split(","):
             if send_telegram(message, CHAT_ID):
-                print(f"Notified: {title} {location} to {CHAT_ID}")
+                logging.info(f"Notified: {title} {location} to {CHAT_ID}")
         time.sleep(1)  # Avoid Telegram rate limiting
 
     if new_jobs:
         save_seen_jobs(seen + new_jobs)
     else:
-        print("No new jobs found.")
+        logging.info("No new jobs found.")
 
 start_health_server()
 
 # Run immediately, then every 30 minutes
 check_jobs()
-schedule.every(1).hours.do(ping_self)
+schedule.every(5).minutes.do(ping_self)
 schedule.every(30).minutes.do(check_jobs)
 
 while True:
